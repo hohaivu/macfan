@@ -219,7 +219,7 @@ final class AppModel {
         let snapshot = await monitor.snapshot()
         liveSnapshot = snapshot
         liveHistory.record(snapshot)
-        thermalState = ProcessInfo.processInfo.thermalState
+        thermalState = snapshot.thermalState
         hasStarted = true
         if visibleViews > 0 { displayRevision &+= 1 }
 
@@ -365,6 +365,10 @@ final class AppModel {
                 model.cooling.resume()
                 model.refreshNow()
             }
+        })
+        // Only wakes the pending sleep; an in-flight tick is not pre-empted.
+        observers.append(NotificationCenter.default.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { AppModel.shared.refreshNow() }
         })
         // Picks up approval in System Settings → Login Items as soon as the user comes back.
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in

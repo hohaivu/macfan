@@ -38,7 +38,8 @@ public actor HardwareMonitor {
             readings: sensorProvider.read(sensors),
             fans: readFans(),
             battery: readBattery(at: date),
-            systemPower: readSystemPower()
+            systemPower: readSystemPower(),
+            thermalState: ProcessInfo.processInfo.thermalState
         )
     }
 
