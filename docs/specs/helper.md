@@ -77,8 +77,9 @@ The helper is a root process that takes manual control of the fans for MacFan an
 ### Taking and keeping control
 
 - The session counts control before the first write. Reason: a write that fails halfway may already have switched a fan to manual.
-- A target write with an invalid fan index or a non-finite speed writes nothing. The session stays out of control. Reason: not stated in the code.
-- A failed target write restores every fan at once. The session then throws the original error. Reason: a failed write may leave a fan manual.
+- A target write with an invalid fan index or a non-finite speed writes nothing and throws before the session changes any state. An unreadable fan count rejects the write in the same way. Reason: not stated in the code.
+- A rejected write keeps the previous control state. A fresh session stays out of control. A session that already controls stays in control and keeps its last heartbeat. Reason: not stated in the code.
+- A target write that passes the check and then fails restores every fan at once. The session then throws the original error. A rejected write does not do this, because it writes nothing. Reason: a failed write may leave a fan manual.
 - Only a successful write counts as a heartbeat. Reason: an app that retries failed writes must not keep the watchdog away.
 - The watchdog restores the fans when the session controls and no heartbeat arrived for `watchdogTimeout`. `watchdogTimeout` is 20 s. Reason: if the app goes silent while fans are manual, macOS must get them back.
 - The watchdog leaves a healthy session alone. It does nothing when the heartbeat is recent. Reason: not stated in the code.
@@ -110,7 +111,8 @@ The helper is a root process that takes manual control of the fans for MacFan an
 
 - SIGTERM makes the helper restore the fans, then exit. Reason: unregister and shutdown send SIGTERM.
 - SIGINT and SIGHUP make the helper restore the fans, then exit, as SIGTERM does. Reason: not stated in the code.
-- The helper installs the signal handlers before the start-up restore. Reason: a signal during the start-up restore must not be lost.
+- The helper installs the signal handlers before the start-up restore. Reason: a signal during the start-up restore must still restore.
+- A signal handler restores on the serial queue. A signal that arrives during the start-up restore restores again after the start-up restore ends. Reason: not stated in the code.
 - The helper exits with status 0 when the restore succeeded and with status 1 when it failed. Reason: a non-zero exit lets launchd relaunch the helper into the start-up retry.
 - The helper must never exit with status 0 after a failed restore. Reason: launchd does not relaunch the helper after exit 0.
 - The helper cannot handle SIGKILL. Reason: a process cannot catch SIGKILL. The launchd relaunch and the start-up restore cover it.
