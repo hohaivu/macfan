@@ -57,17 +57,97 @@ struct FanCurveTests {
 struct SpeedGovernorTests {
     let start = Date(timeIntervalSince1970: 0)
 
-    @Test func `speeds up immediately`() {
+    /// Contract 7: a non-urgent rise is capped at 0.15/s.
+    @Test func `a non-urgent rise is capped per second`() {
         var governor = SpeedGovernor()
         _ = governor.next(target: 0.2, at: start)
-        #expect(governor.next(target: 0.9, at: start + 1) == 0.9)
+        #expect(abs(governor.next(target: 0.9, at: start + 1) - 0.35) < 1e-9)
     }
 
+    /// Contract 7: an urgent rise is met at once.
+    @Test func `an urgent rise is immediate`() {
+        var governor = SpeedGovernor()
+        _ = governor.next(target: 0.2, at: start)
+        #expect(governor.next(target: 0.9, at: start + 1, urgent: true) == 0.9)
+    }
+
+    /// Contract 7: a rise has no deadband, urgent or not. A rise check of `target > current + deadband` fails both.
+    @Test(arguments: [false, true])
+    func `a tiny rise is not swallowed by the deadband`(urgent: Bool) {
+        var governor = SpeedGovernor()
+        _ = governor.next(target: 0.50, at: start)
+        #expect(abs(governor.next(target: 0.51, at: start + 1, urgent: urgent) - 0.51) < 1e-9)
+    }
+
+    /// Contract 8 (after the hold): falls at 0.04/s. The hold is switched off here to isolate the rate.
     @Test func `slows down gradually`() {
         var governor = SpeedGovernor()
+        governor.holdTime = 0
         _ = governor.next(target: 1, at: start)
         let next = governor.next(target: 0, at: start + 2)
         #expect(abs(next - (1 - 2 * governor.maximumDecreasePerSecond)) < 0.0001)
+    }
+
+    /// Contract 8: the speed is held until the hold expires, which is 10 s after the last demand.
+    /// A sample at +12 counts only the 2 s after expiry (0.92), whether or not +10 was sampled.
+    /// A budget of `now - lastUpdate` gives 0.72 when +10 is skipped.
+    @Test(arguments: [[5.0, 10, 12], [5.0, 12]])
+    func `a fall waits for the hold and counts only time after it`(dates: [Double]) {
+        var governor = SpeedGovernor()
+        _ = governor.next(target: 1, at: start)
+        var speeds: [Double] = []
+        for offset in dates {
+            speeds.append(governor.next(target: 0, at: start + offset))
+        }
+        #expect(speeds.dropLast().allSatisfy { $0 == 1 }, "held through +5 and the exact expiry at +10")
+        #expect(abs(speeds.last! - 0.92) < 1e-9)
+    }
+
+    /// Contract 8: one sample long after the demand counts 20 s of fall time (30 s minus the 10 s hold).
+    /// A budget of `now - lastUpdate` would give 0.
+    @Test func `a single late sample falls for the time after the hold only`() {
+        var governor = SpeedGovernor()
+        _ = governor.next(target: 1, at: start)
+        #expect(abs(governor.next(target: 0, at: start + 30) - 0.2) < 1e-9)
+    }
+
+    /// Contract 8: a fall never goes below the target.
+    @Test func `a fall stops at the target`() {
+        var governor = SpeedGovernor()
+        _ = governor.next(target: 1, at: start)
+        #expect(abs(governor.next(target: 0.9, at: start + 30) - 0.9) < 1e-9)
+    }
+
+    /// Contract 8: a target inside the deadband counts as demand and restarts the hold.
+    @Test func `a target within the deadband restarts the hold`() {
+        var governor = SpeedGovernor()
+        _ = governor.next(target: 1, at: start)
+        #expect(governor.next(target: 0.99, at: start + 8) == 1)
+        // 4 s after the restart, not 12 s after the first demand.
+        #expect(governor.next(target: 0, at: start + 12) == 1)
+    }
+
+    /// Contract 9: with `urgent` and no hold, the governor is the old one (instant rise, 0.02 deadband, 0.04/s fall).
+    /// Expected values are worked out by hand from those rules.
+    @Test func `matches the earlier governor when urgent without a hold`() {
+        var governor = SpeedGovernor()
+        governor.holdTime = 0
+        let steps: [(at: Double, target: Double, expected: Double)] = [
+            (0, 0.50, 0.50),    // first sample
+            (1, 0.51, 0.51),    // tiny rise is instant
+            (1, 0.30, 0.51),    // repeated date: no time to fall
+            (2, 0.50, 0.51),    // fall of 0.01 is inside the deadband
+            (3, 0.20, 0.47),    // 1 s at 0.04/s
+            (8, 0.00, 0.27),    // 5 s at 0.04/s
+            (100, 0.00, 0.00),  // long fall stops at the target
+            (101, 0.90, 0.90),  // instant rise
+        ]
+        for step in steps {
+            let speed = governor.next(target: step.target, at: start + step.at, urgent: true)
+            #expect(abs(speed - step.expected) < 1e-9, "t=\(step.at) target=\(step.target)")
+        }
+        // Contract 9: a date earlier than the previous sample never lowers the speed.
+        #expect(governor.next(target: 0, at: start + 50, urgent: true) >= 0.90 - 1e-9)
     }
 
     @Test func `ignores tiny decreases`() {
