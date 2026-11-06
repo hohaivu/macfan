@@ -55,13 +55,29 @@ The source of a curve resolves to one temperature. See "Curve source" in [sensor
 
 `FanCurve.speed(at:)` interpolates linearly between the points of the curve. Below the first point and above the last point, the speed stays flat. Reason: not stated in the code.
 
-A curve keeps these invariants. Each mutation enforces them.
+A curve has these invariants:
 
-- Points stay in order of temperature and at least 1 °C apart.
+- Points stay in order of temperature and at least 1 °C apart. Reason: not stated in the code.
 - Speed never falls when temperature rises. Reason: hotter never means slower.
-- Temperature is between 30 and 105 °C, speed is between 0 and 1, and a curve has 2 to 16 points. Reason: not stated in the code.
+- Temperature is between 30 and 105 °C, and speed is between 0 and 1. Reason: not stated in the code.
+- A curve has 2 to 16 points. Reason: not stated in the code.
 
-Decoding rejects a stored curve that breaks an invariant. Reason: repairing corrupt settings could produce a curve that nobody chose.
+A curve comes from the decoder or from the constructor. Each path enforces the invariants in a different way.
+
+| Path | Behavior | Reason |
+| --- | --- | --- |
+| Decoder | Rejects a stored curve that breaks any invariant, with the full bounds above. It does not repair the curve. | Repairing corrupt settings could produce a curve that nobody chose. |
+| Constructor `FanCurve(points:)` | Requires at least 2 points. It has no upper limit on the count. It then normalizes the points. | Not stated in the code. |
+
+Normalization does these steps:
+
+1. It clamps each temperature to 30 to 105 °C and each speed to 0 to 1.
+2. It sorts the points by temperature.
+3. It moves each point to at least 1 °C above the previous point. It raises each speed to at least the speed of the previous point.
+
+Step 3 can push a temperature above 105 °C. Example: two points at 105 °C become 105 °C and 106 °C. A constructor can also keep more than 16 points. Reason: not stated in the code.
+
+The `move(pointAt:to:)` mutation keeps the temperature between the neighbors of the point and the speed between 0 and 1. It pushes the speed of the neighbors so that the curve does not fall. Reason: dragging a point keeps the curve valid.
 
 Each preset is a deliberate trade-off between noise and temperature. Points show °C and speed.
 
