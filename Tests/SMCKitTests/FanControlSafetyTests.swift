@@ -139,6 +139,85 @@ struct FanControlSessionTests {
         #expect(smc.values["F0Md"] == 1)
     }
 
+    // MARK: Start-up restore (helper wave 3). A fresh session has never written, as at helper start.
+
+    @Test func `a fresh session's restore returns leftover manual fans and Ftst`() throws {
+        let smc = FakeSMC.appleSilicon()
+        smc.values["F0Md"] = 1
+        smc.values["F1Md"] = 1
+        smc.values["Ftst"] = 1
+        let session = FanControlSession(fans: SMCFanControl(smc: smc, modeSwitchAttempts: 2, modeSwitchInterval: 0), watchdogTimeout: 20)
+
+        try session.restore()
+
+        #expect(smc.values["F0Md"] == 0)
+        #expect(smc.values["F1Md"] == 0)
+        #expect(smc.values["Ftst"] == 0)
+        #expect(!session.isControlling)
+    }
+
+    @Test func `restoring an already automatic SMC succeeds and stays automatic`() throws {
+        let smc = FakeSMC.appleSilicon()
+        let session = FanControlSession(fans: SMCFanControl(smc: smc, modeSwitchAttempts: 2, modeSwitchInterval: 0), watchdogTimeout: 20)
+
+        try session.restore()
+        try session.restore()
+
+        #expect(["F0Md", "F1Md", "Ftst"].allSatisfy { smc.values[$0] == 0 })
+        #expect(!session.isControlling)
+    }
+
+    @Test func `restore clears Ftst when only one fan was left manual`() throws {
+        let smc = FakeSMC.appleSilicon()
+        smc.values["F1Md"] = 1
+        smc.values["Ftst"] = 1
+        let session = FanControlSession(fans: SMCFanControl(smc: smc, modeSwitchAttempts: 2, modeSwitchInterval: 0), watchdogTimeout: 20)
+
+        try session.restore()
+
+        #expect(smc.values["F0Md"] == 0)
+        #expect(smc.values["F1Md"] == 0)
+        #expect(smc.values["Ftst"] == 0)
+    }
+
+    @Test func `restore clears the forced bits on a Mac without mode keys`() throws {
+        let smc = FakeSMC([
+            "FNum": 2, "FS! ": 3,
+            "F0Ac": 2000, "F0Mn": 1200, "F0Mx": 6000, "F0Tg": 2000,
+            "F1Ac": 2100, "F1Mn": 1200, "F1Mx": 6000, "F1Tg": 2100,
+        ])
+        let session = FanControlSession(fans: SMCFanControl(smc: smc, modeSwitchAttempts: 2, modeSwitchInterval: 0), watchdogTimeout: 20)
+
+        try session.restore()
+
+        #expect(smc.values["FS! "] == 0)
+        #expect(!session.isControlling)
+    }
+
+    @Test func `a failed restore on a fresh session is retried by the watchdog until it works`() throws {
+        let smc = FakeSMC.appleSilicon()
+        smc.values["F0Md"] = 1
+        smc.values["Ftst"] = 1
+        let session = FanControlSession(fans: SMCFanControl(smc: smc, modeSwitchAttempts: 2, modeSwitchInterval: 0), watchdogTimeout: 20)
+
+        smc.ignoring = ["F0Md"]
+        #expect(throws: SMCError.self) { try session.restore() }
+        #expect(session.isControlling)
+        #expect(session.checkWatchdog(at: start) == .restoreFailed)
+        #expect(session.isControlling)
+
+        smc.ignoring = []
+        #expect(session.checkWatchdog(at: start + 5) == .returnedFans)
+        #expect(smc.values["F0Md"] == 0)
+        #expect(smc.values["Ftst"] == 0)
+        #expect(!session.isControlling)
+
+        // After success no further restore happens without a new cause.
+        let writesAfterSuccess = smc.writes.count
+        #expect(session.checkWatchdog(at: start + 10) == .idle)
+        #expect(smc.writes.count == writesAfterSuccess)
+    }
+
     @Test func `an invalid fan index is rejected before anything is written`() {
         let smc = FakeSMC.appleSilicon()
         let session = FanControlSession(fans: SMCFanControl(smc: smc, modeSwitchAttempts: 2, modeSwitchInterval: 0), watchdogTimeout: 20)
