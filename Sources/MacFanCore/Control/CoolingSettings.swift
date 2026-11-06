@@ -52,11 +52,13 @@ public struct CoolingSettings: Hashable, Codable, Sendable {
     public var source: TemperatureSource = .hottestCPU
     /// 0…1, used by `.fixed`.
     public var fixedSpeed: Double = 0.5
+    /// Opt-in, risky: during an emergency Fixed and Curve keep their normal control (with its minimum speeds) instead of full speed.
+    public var keepsSettingInEmergency = false
 
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case mode, preset, customCurve, source, fixedSpeed
+        case mode, preset, customCurve, source, fixedSpeed, keepsSettingInEmergency
     }
 
     /// Decoding validates like the UI does, so corrupt settings fall back to defaults
@@ -68,6 +70,7 @@ public struct CoolingSettings: Hashable, Codable, Sendable {
         customCurve = try container.decode(FanCurve.self, forKey: .customCurve)
         source = try container.decode(TemperatureSource.self, forKey: .source)
         fixedSpeed = try container.decode(Double.self, forKey: .fixedSpeed)
+        keepsSettingInEmergency = try container.decodeIfPresent(Bool.self, forKey: .keepsSettingInEmergency) ?? false
         guard fixedSpeed.isFinite, (0...1).contains(fixedSpeed) else {
             throw DecodingError.dataCorruptedError(
                 forKey: .fixedSpeed, in: container, debugDescription: "Fixed speed \(fixedSpeed) is outside 0…1"

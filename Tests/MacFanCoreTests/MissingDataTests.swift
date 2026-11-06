@@ -19,8 +19,18 @@ struct MissingDataTests {
         _ = planner.decide(settings: settings(.fixed), snapshot: Fixtures.snapshot([Fixtures.reading(critical + 1)]))
 
         let silent = Fixtures.snapshot([])
-        #expect(planner.decide(settings: settings(.fixed), snapshot: silent) == .system(.emergency))
+        #expect(planner.decide(settings: settings(.fixed), snapshot: silent) == .emergency)
         #expect(planner.isInEmergency)
+    }
+
+    /// Opt-in: with the flag on the same silent snapshot means missing data, not an emergency.
+    @Test func `with the flag on, quiet sensors after an emergency are no data`() {
+        var planner = CoolingPlanner()
+        var keeping = settings(.fixed)
+        keeping.keepsSettingInEmergency = true
+        _ = planner.decide(settings: keeping, snapshot: Fixtures.snapshot([Fixtures.reading(critical + 1)]))
+        #expect(planner.decide(settings: keeping, snapshot: Fixtures.snapshot([])) == .system(.noData))
+        #expect(planner.isInEmergency, "the latch holds, only the decision differs")
     }
 
     @Test func `an emergency ends once valid readings show it cooled down`() {
@@ -116,6 +126,38 @@ struct CoolingSettingsDecodingTests {
         settings.fixedSpeed = 2
         let data = try JSONEncoder().encode(settings)
         #expect(throws: DecodingError.self) { try JSONDecoder().decode(CoolingSettings.self, from: data) }
+    }
+
+    @Test func `the flag keeping the setting in an emergency is off by default`() {
+        #expect(CoolingSettings().keepsSettingInEmergency == false)
+    }
+
+    @Test(arguments: [false, true])
+    func `the flag round-trips`(keeps: Bool) throws {
+        var settings = CoolingSettings()
+        settings.keepsSettingInEmergency = keeps
+        let decoded = try JSONDecoder().decode(CoolingSettings.self, from: JSONEncoder().encode(settings))
+        #expect(decoded == settings)
+        #expect(decoded.keepsSettingInEmergency == keeps)
+    }
+
+    /// Settings saved by an earlier version have no flag: they decode with it off and keep every other choice.
+    @Test func `settings from an earlier version decode with the flag off`() throws {
+        var settings = CoolingSettings()
+        settings.mode = .curve
+        settings.preset = .custom
+        settings.customCurve = FanCurve([(45, 0.25), (85, 0.9)])
+        settings.source = .sensor(id: "smc.TC0P")
+        settings.fixedSpeed = 0.37
+        settings.keepsSettingInEmergency = true
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(settings)) as? [String: Any])
+        #expect(object.removeValue(forKey: "keepsSettingInEmergency") != nil, "the encoder writes the key")
+        let legacy = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(CoolingSettings.self, from: legacy)
+        var expected = settings
+        expected.keepsSettingInEmergency = false
+        #expect(decoded == expected)
     }
 
     @Test func `valid settings round-trip`() throws {

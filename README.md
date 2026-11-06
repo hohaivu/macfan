@@ -53,8 +53,10 @@ click deeper.
   - *Full Speed* — everything at maximum.
   - Optionally switch modes on their own when you plug in or unplug, say Automatic on
     battery and Smart Curve on the adapter.
-- **Safety first.** Fans go back to macOS when you quit, when the Mac sleeps, if
-  MacFan crashes or stops responding, and whenever a part becomes critically hot.
+- **Safety first.** Fans go back to macOS when you quit, when the Mac sleeps, or if
+  MacFan crashes or stops responding. By default, when a part gets critically hot or
+  macOS reports critical thermal pressure, Smart Curve and Fixed Speed run every fan at
+  full speed until it eases; a setting marked risky lets them keep your speed instead.
 - **Menu bar.** Temperature, fan speed, or both. Any sensor can be pinned there.
 - **Light on your Mac.** Under 2% CPU with the window open, and close to nothing when
   it's only in the menu bar. MacFan shouldn't be a reason your Mac runs warm.
@@ -177,7 +179,8 @@ Ideas, bug reports and pull requests are welcome — see [CONTRIBUTING.md](CONTR
 ## Disclaimer
 
 Changing fan speeds is at your own risk. MacFan never lets fans run below the
-firmware's minimum and hands control back to macOS whenever something looks wrong,
+firmware's minimum, hands control back to macOS when it can't read temperatures or
+apply your setting, and by default runs the fans at full speed in an emergency,
 but no software can promise your hardware is safe.
 
 MacFan is not affiliated with Apple or with Tunabelly Software (TG Pro).

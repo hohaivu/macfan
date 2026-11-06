@@ -9,10 +9,11 @@ private enum Sample {
         Fixtures.snapshot(cpu.map { [Fixtures.reading($0)] } ?? [], at: Date(timeIntervalSince1970: seconds), thermalState: state)
     }
 
-    /// Fixed mode at `fixed`, or Curve mode on a flat custom curve at `curve`.
-    static func settings(_ mode: CoolingMode, fixed: Double = 0.2, curve: Double = 0.3) -> CoolingSettings {
+    /// Fixed mode at `fixed`, or Curve mode on a flat custom curve at `curve`. `keeps` is `keepsSettingInEmergency`.
+    static func settings(_ mode: CoolingMode, fixed: Double = 0.2, curve: Double = 0.3, keeps: Bool = false) -> CoolingSettings {
         var settings = CoolingSettings()
         settings.mode = mode
+        settings.keepsSettingInEmergency = keeps
         settings.fixedSpeed = fixed
         settings.preset = .custom
         settings.customCurve = FanCurve([(40, curve), (80, curve)])
@@ -94,6 +95,22 @@ struct PressureLatchTests {
         }
     }
 
+    /// A sample that keeps the latch set without starting it: cpu 96 is inside the recovery margin, serious is above fair.
+    func latchedSample(_ trigger: Trigger, at seconds: Double) -> HardwareSnapshot {
+        switch trigger {
+        case .temperature: Sample.at(seconds, cpu: 96)
+        case .pressure: Sample.at(seconds, cpu: 60, .serious)
+        }
+    }
+
+    /// The floor of the emergency sample: cpu 100 gives 0.8, critical pressure at cpu 60 gives 0.6.
+    func emergencyFloor(_ trigger: Trigger) -> Double {
+        switch trigger {
+        case .temperature: 0.8
+        case .pressure: 0.6
+        }
+    }
+
     /// Contract 1: the emergency is returned on the very sample that starts it, whatever the governor holds.
     /// Setup: floor 0.5 at +1, then the floor falls at +2 so the governor holds 0.5 inside its hold.
     @Test(arguments: [CoolingMode.fixed, .curve], Trigger.allCases)
@@ -103,15 +120,69 @@ struct PressureLatchTests {
         _ = planner.decide(settings: settings, snapshot: Sample.at(0, cpu: 60))
         #expect(Sample.speed(planner.decide(settings: settings, snapshot: Sample.at(1, cpu: 90))) == 0.5)
         #expect(Sample.speed(planner.decide(settings: settings, snapshot: Sample.at(2, cpu: 70))) == 0.5, "held, so the governor is mid-hold")
-        #expect(planner.decide(settings: settings, snapshot: emergencySample(trigger, at: 3)) == .system(.emergency))
+        #expect(planner.decide(settings: settings, snapshot: emergencySample(trigger, at: 3)) == .emergency)
     }
 
-    /// Contract 1: Max keeps running at full speed, Automatic stays with the user.
-    @Test(arguments: Trigger.allCases)
-    func `max and automatic are not rescued`(trigger: Trigger) {
+    /// Max keeps running at full speed and Automatic stays with the user, whatever the flag.
+    @Test(arguments: Trigger.allCases, [false, true])
+    func `max and automatic are not rescued`(trigger: Trigger, keeps: Bool) {
         var planner = CoolingPlanner()
-        #expect(planner.decide(settings: Sample.settings(.max), snapshot: emergencySample(trigger, at: 0)) == .manual(speed: 1, temperature: nil))
-        #expect(planner.decide(settings: Sample.settings(.automatic), snapshot: emergencySample(trigger, at: 1)) == .system(.userChoice))
+        #expect(planner.decide(settings: Sample.settings(.max, keeps: keeps), snapshot: emergencySample(trigger, at: 0)) == .manual(speed: 1, temperature: nil))
+        #expect(planner.decide(settings: Sample.settings(.automatic, keeps: keeps), snapshot: emergencySample(trigger, at: 1)) == .system(.userChoice))
+    }
+
+    /// Opt-in: a set latch never yields `.emergency`. Fixed and Curve keep their control, raised to the floor of the same snapshot.
+    @Test(arguments: [CoolingMode.fixed, .curve], Trigger.allCases)
+    func `keeping the setting never returns an emergency`(mode: CoolingMode, trigger: Trigger) throws {
+        var planner = CoolingPlanner()
+        let snapshot = emergencySample(trigger, at: 0)
+        let speed = try #require(Sample.speed(planner.decide(settings: Sample.settings(mode, keeps: true), snapshot: snapshot)))
+        let floor = SafetyPolicy.minimumSpeed(readings: snapshot.readings, thermalState: snapshot.thermalState)
+        #expect(speed >= floor)
+        #expect(abs(speed - emergencyFloor(trigger)) < 1e-9, "the user's 0.2 / 0.3 is below the floor, so the floor wins")
+    }
+
+    /// Opt-in: the user's own speed still applies when it is above the floor.
+    @Test(arguments: [CoolingMode.fixed, .curve], Trigger.allCases)
+    func `keeping the setting follows a setting above the floor`(mode: CoolingMode, trigger: Trigger) {
+        var planner = CoolingPlanner()
+        let decision = planner.decide(settings: Sample.settings(mode, fixed: 0.95, curve: 0.95, keeps: true), snapshot: emergencySample(trigger, at: 0))
+        #expect(Sample.speed(decision) == 0.95)
+    }
+
+    /// Opt-in: the flag takes effect on the next tick both ways, without waiting for the latch to clear.
+    @Test(arguments: [CoolingMode.fixed, .curve], Trigger.allCases)
+    func `flipping the flag mid-latch applies on the next tick`(mode: CoolingMode, trigger: Trigger) throws {
+        var planner = CoolingPlanner()
+        #expect(planner.decide(settings: Sample.settings(mode), snapshot: emergencySample(trigger, at: 0)) == .emergency)
+        let kept = try #require(Sample.speed(planner.decide(settings: Sample.settings(mode, keeps: true), snapshot: latchedSample(trigger, at: 1))))
+        #expect(abs(kept - emergencyFloor(trigger)) < 1e-9, "off to on: the setting, raised to the floor, with the latch still set")
+        #expect(planner.decide(settings: Sample.settings(mode), snapshot: latchedSample(trigger, at: 2)) == .emergency, "on to off")
+    }
+
+    /// Without an emergency nothing changed: no readings is still `noData`, whatever the flag.
+    @Test(arguments: [CoolingMode.fixed, .curve], [false, true])
+    func `no readings without a latch is still no data`(mode: CoolingMode, keeps: Bool) {
+        var planner = CoolingPlanner()
+        #expect(planner.decide(settings: Sample.settings(mode, keeps: keeps), snapshot: Sample.at(0)) == .system(.noData))
+    }
+
+    /// Recovery: the first tick after both latches clear returns the user's setting raised to the floor.
+    /// Temperature: cpu 96 holds, cpu 94 gives the 0.74 floor. Pressure: cpu 60 at fair gives the setting itself.
+    @Test(arguments: [CoolingMode.fixed, .curve], Trigger.allCases)
+    func `recovery resumes the setting raised to the floor`(mode: CoolingMode, trigger: Trigger) throws {
+        var planner = CoolingPlanner()
+        let settings = Sample.settings(mode, fixed: 0.2, curve: 0.3)
+        #expect(planner.decide(settings: settings, snapshot: emergencySample(trigger, at: 0)) == .emergency)
+        #expect(planner.decide(settings: settings, snapshot: latchedSample(trigger, at: 1)) == .emergency)
+        let recovered: HardwareSnapshot
+        let expected: Double
+        switch trigger {
+        case .temperature: (recovered, expected) = (Sample.at(2, cpu: 94), 0.74)
+        case .pressure: (recovered, expected) = (Sample.at(2, cpu: 60, .fair), mode == .fixed ? 0.2 : 0.3)
+        }
+        let speed = try #require(Sample.speed(planner.decide(settings: settings, snapshot: recovered)))
+        #expect(abs(speed - expected) < 1e-9)
     }
 
     /// Contract 2: the latch starts at critical, survives serious, and ends at fair or nominal.
@@ -119,16 +190,23 @@ struct PressureLatchTests {
     func `pressure latch stays through serious and ends at fair or nominal`(mode: CoolingMode, recovered: ProcessInfo.ThermalState) {
         var planner = CoolingPlanner()
         let settings = Sample.settings(mode)
-        #expect(planner.decide(settings: settings, snapshot: Sample.at(0, cpu: 60, .critical)) == .system(.emergency))
-        #expect(planner.decide(settings: settings, snapshot: Sample.at(1, cpu: 60, .serious)) == .system(.emergency))
-        #expect(planner.decide(settings: settings, snapshot: Sample.at(2, cpu: 60, recovered)) != .system(.emergency))
+        #expect(planner.decide(settings: settings, snapshot: Sample.at(0, cpu: 60, .critical)) == .emergency)
+        #expect(planner.decide(settings: settings, snapshot: Sample.at(1, cpu: 60, .serious)) == .emergency)
+        #expect(planner.decide(settings: settings, snapshot: Sample.at(2, cpu: 60, recovered)) != .emergency)
     }
 
     /// Contract 2: serious pressure alone does not start the emergency.
     @Test(arguments: [CoolingMode.fixed, .curve])
     func `serious pressure alone is not an emergency`(mode: CoolingMode) {
         var planner = CoolingPlanner()
-        #expect(planner.decide(settings: Sample.settings(mode), snapshot: Sample.at(0, cpu: 60, .serious)) != .system(.emergency))
+        #expect(planner.decide(settings: Sample.settings(mode), snapshot: Sample.at(0, cpu: 60, .serious)) != .emergency)
+    }
+
+    /// Opt-in: critical pressure with no readings has no emergency to act on, so it is `noData`.
+    @Test(arguments: [CoolingMode.fixed, .curve])
+    func `keeping the setting with critical pressure and no readings is no data`(mode: CoolingMode) {
+        var planner = CoolingPlanner()
+        #expect(planner.decide(settings: Sample.settings(mode, keeps: true), snapshot: Sample.at(0, .critical)) == .system(.noData))
     }
 
     /// Contract 2: the latch updates with no readings. Critical with an empty snapshot is an emergency, not `noData`.
@@ -136,8 +214,8 @@ struct PressureLatchTests {
     func `critical pressure with no readings is an emergency`(mode: CoolingMode) {
         var planner = CoolingPlanner()
         let settings = Sample.settings(mode)
-        #expect(planner.decide(settings: settings, snapshot: Sample.at(0, .critical)) == .system(.emergency))
-        #expect(planner.decide(settings: settings, snapshot: Sample.at(1, .serious)) == .system(.emergency), "still latched with no readings")
+        #expect(planner.decide(settings: settings, snapshot: Sample.at(0, .critical)) == .emergency)
+        #expect(planner.decide(settings: settings, snapshot: Sample.at(1, .serious)) == .emergency, "still latched with no readings")
         #expect(planner.decide(settings: settings, snapshot: Sample.at(2, .fair)) == .system(.noData), "cleared without readings, then missing data")
     }
 
@@ -146,9 +224,9 @@ struct PressureLatchTests {
     func `fair pressure does not end a hot emergency`(mode: CoolingMode) {
         var planner = CoolingPlanner()
         let settings = Sample.settings(mode)
-        #expect(planner.decide(settings: settings, snapshot: Sample.at(0, cpu: 100, .critical)) == .system(.emergency))
-        #expect(planner.decide(settings: settings, snapshot: Sample.at(1, cpu: 96, .fair)) == .system(.emergency))
-        #expect(planner.decide(settings: settings, snapshot: Sample.at(2, cpu: 94, .fair)) != .system(.emergency))
+        #expect(planner.decide(settings: settings, snapshot: Sample.at(0, cpu: 100, .critical)) == .emergency)
+        #expect(planner.decide(settings: settings, snapshot: Sample.at(1, cpu: 96, .fair)) == .emergency)
+        #expect(planner.decide(settings: settings, snapshot: Sample.at(2, cpu: 94, .fair)) != .emergency)
     }
 
     /// Contract 3: a temperature recovery does not clear pressure that is still latched (serious after critical).
@@ -156,9 +234,9 @@ struct PressureLatchTests {
     func `a cool reading does not end a pressure emergency`(mode: CoolingMode) {
         var planner = CoolingPlanner()
         let settings = Sample.settings(mode)
-        #expect(planner.decide(settings: settings, snapshot: Sample.at(0, cpu: 100, .critical)) == .system(.emergency))
-        #expect(planner.decide(settings: settings, snapshot: Sample.at(1, cpu: 90, .serious)) == .system(.emergency))
-        #expect(planner.decide(settings: settings, snapshot: Sample.at(2, cpu: 90, .nominal)) != .system(.emergency))
+        #expect(planner.decide(settings: settings, snapshot: Sample.at(0, cpu: 100, .critical)) == .emergency)
+        #expect(planner.decide(settings: settings, snapshot: Sample.at(1, cpu: 90, .serious)) == .emergency)
+        #expect(planner.decide(settings: settings, snapshot: Sample.at(2, cpu: 90, .nominal)) != .emergency)
     }
 }
 

@@ -79,6 +79,14 @@ private struct GeneralSettings: View {
                 }
                 Button("Search for Sensors Again") { model.rediscoverSensors() }
             }
+
+            Section {
+                Toggle("Keep my fan setting during emergencies", isOn: $preferences.cooling.keepsSettingInEmergency)
+            } footer: {
+                Label("Risky. An emergency is when a part reaches its critical temperature or macOS reports critical thermal pressure. Normally Smart Curve and Fixed Speed then run every fan at full speed until both have eased. With this on, they keep following your setting with their usual minimum speeds, so parts can stay hot for longer. Full Speed and Automatic aren't affected.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
         }
         .formStyle(.grouped)
     }

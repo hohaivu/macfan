@@ -25,8 +25,8 @@ assembles the `.app` bundle from the package's products.
 2. **Decisions are pure.** `CoolingPlanner`, `SpeedGovernor`, `SafetyPolicy`, `FanCurve`,
    `SensorCatalog`, `ActivityTracker` and `BatteryInfo(properties:)` take values and return values. They are
    where the interesting logic lives and they are covered by tests. Keep I/O out of them.
-3. **macOS is the safe default.** Every unusual situation — no data, emergency, sleep,
-   quit, crash, lost connection — ends with the fans back under macOS control.
+3. **macOS is the safe default.** Every unusual situation — no data, sleep,
+   quit, crash, lost connection — ends with the fans back under macOS control. An emergency in Smart Curve or Fixed Speed runs every fan at full speed instead, unless the user opted to keep their setting.
 4. **The privileged surface stays tiny.** Adding a method to `MacFanHelperProtocol` is a
    security decision. Bump `HelperConstants.protocolVersion` when you change it.
 

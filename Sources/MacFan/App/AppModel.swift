@@ -260,8 +260,12 @@ final class AppModel {
             load = CPULoad.current().flatMap { cpuShare.update($0) }
             kind = .cpuShare
         }
-        // macOS has the fans whenever MacFan isn't driving them, whatever mode is chosen.
-        let controller: CoolingController? = if case .controlling = cooling.state { preferences.cooling.learningController } else { .macOS }
+        // macOS has the fans whenever MacFan isn't driving them; an emergency runs full speed, which reveals nothing, like Max.
+        let controller: CoolingController? = switch cooling.state {
+        case .controlling: preferences.cooling.learningController
+        case .emergency: nil
+        default: .macOS
+        }
         if let sample = coolingSampler.add(snapshot, load: load, controller: controller) {
             liveInsights.cooling.add(sample, kind: kind)
             insightsChanged = true
