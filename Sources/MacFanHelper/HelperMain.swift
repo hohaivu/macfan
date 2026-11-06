@@ -6,21 +6,24 @@ import Security
 enum HelperMain {
     static func main() {
         let service = HelperService(clientRequirement: CodeSigningPolicy.clientRequirement())
+
+        // Installed before start(): a signal during the start-up restore must still restore.
+        // Exit 0 only after a confirmed restore; a non-zero exit lets launchd relaunch the helper.
+        let terminations = [SIGTERM, SIGINT, SIGHUP].map { sig in
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+            source.setEventHandler { exit(service.restoreSynchronously() ? EXIT_SUCCESS : EXIT_FAILURE) }
+            source.resume()
+            return source
+        }
+
         service.start()
 
         let listener = NSXPCListener(machServiceName: HelperConstants.machServiceName)
         listener.delegate = service
         listener.resume()
 
-        signal(SIGTERM, SIG_IGN)
-        let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
-        termination.setEventHandler {
-            service.restoreSynchronously()
-            exit(EXIT_SUCCESS)
-        }
-        termination.resume()
-
-        withExtendedLifetime((listener, termination)) {
+        withExtendedLifetime((listener, terminations)) {
             dispatchMain()
         }
     }

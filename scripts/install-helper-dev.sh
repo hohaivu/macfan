@@ -31,6 +31,7 @@ case "$ACTION" in
   <key>Label</key><string>$LABEL</string>
   <key>Program</key><string>$DEST</string>
   <key>MachServices</key><dict><key>$LABEL</key><true/></dict>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
 </dict>
 </plist>
 EOF
