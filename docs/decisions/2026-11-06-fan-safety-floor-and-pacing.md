@@ -8,7 +8,7 @@ Excess fan noise was a complaint of the user.
 ## Decision
 - The floor reads identified `.cpu` and `.gpu` readings only. This is a product default.
 - The floor is relative to the critical limit of each category: 0 at −15, 0.5 at −10, 0.8 at −5.
-- Serious pressure sets a floor of 0.6. Critical pressure returns the fans to macOS until fair or nominal.
+- Serious pressure sets a floor of 0.6. Critical pressure returns the fans to macOS until fair or nominal. Superseded in part by [Emergency full speed](2026-11-06-emergency-full-speed.md).
 - A hold time of 10 s delays a fall. We use it instead of a temperature band.
 - An urgent rise (any positive floor) bypasses the deadband, the hold and the rise cap of 0.15/s.
 

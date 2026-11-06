@@ -1,16 +1,16 @@
 # Fan control
 
-Fan control turns the cooling mode, the temperature readings and the thermal pressure of macOS into one fan decision for each tick.
+Fan control turns the cooling mode, the temperature readings, the thermal pressure of macOS and the emergency override into one fan decision for each tick.
 
 ## Terms
 
 | Term | Meaning |
 | --- | --- |
 | Tick | One refresh of the hardware snapshot. `AppModel.tick` runs it, then calls the engine. |
-| Decision | The result of `CoolingPlanner.decide`. Either macOS controls the fans (`.system` with a reason), or MacFan runs every fan at one speed (`.manual`). |
+| Decision | The result of `CoolingPlanner.decide`. macOS controls the fans (`.system` with a reason), MacFan runs every fan at one speed (`.manual`), or MacFan runs every fan at full speed in an emergency (`.emergency`). |
 | Speed | A number from 0 to 1 of the range of a fan. 0 is the minimum speed of the fan. |
 | Thermal pressure | The `ProcessInfo.ThermalState` of macOS: nominal, fair, serious or critical. |
-| Emergency | The state in which MacFan returns the fans to macOS. A hot reading or critical thermal pressure starts it. |
+| Emergency | Either latch is set: a safety reading reached its critical temperature, or macOS reports critical thermal pressure. In Fixed and Curve with `keepsSettingInEmergency` off, MacFan runs every fan at full speed. |
 | Latch | A flag that stays set until a stated condition clears it. |
 | Floor | The lowest speed that MacFan allows in Fixed and Curve modes. |
 | Governor | `SpeedGovernor`. It paces the changes of the speed. |
@@ -28,17 +28,21 @@ Fan control turns the cooling mode, the temperature readings and the thermal pre
 | `FanControlEngine` | `Sources/MacFanCore/Control/FanControlEngine.swift` |
 | Thermal pressure in the snapshot | `Sources/MacFanCore/Models/HardwareSnapshot.swift`, `Sources/MacFanCore/Hardware/HardwareMonitor.swift` |
 | Tick and thermal notification | `Sources/MacFan/App/AppModel.swift` |
-| Curve warning | `Sources/MacFan/Features/Fans/FansView.swift` |
+| Curve warning, status banner, footnote | `Sources/MacFan/Features/Fans/FansView.swift` |
+| Mode tag text | `Sources/MacFan/Features/Overview/OverviewView.swift` |
+| Emergency setting | `Sources/MacFan/Features/Settings/SettingsView.swift` |
 
 ## Settings and modes
 
-`CoolingSettings` holds everything the user chose about cooling: `mode`, `preset`, `customCurve`, `source` and `fixedSpeed`.
+`CoolingSettings` holds everything the user chose about cooling: `mode`, `preset`, `customCurve`, `source`, `fixedSpeed` and `keepsSettingInEmergency`.
 
 - A change of mode keeps the other settings. Reason: not stated in the code.
 - The defaults are Automatic, the Balanced preset, a custom curve equal to Balanced, the source Hottest CPU and a fixed speed of 0.5. Reason: not stated in the code.
 - `activeCurve` is the curve of the preset. For the Custom preset, it is `customCurve`. Reason: not stated in the code.
 - Decoding rejects a fixed speed outside 0 to 1. Reason: corrupt settings fall back to the defaults instead of driving the fans.
 - `decide` also clamps the fixed speed to 0 to 1. Reason: not stated in the code.
+- `keepsSettingInEmergency` is false by default. Decoding treats a missing key as false. Reason: settings saved by earlier versions keep the other choices of the user, and a strict decode resets them all.
+- Turning on `keepsSettingInEmergency` is opt-in and risky. Reason: the owner chose to allow it. See [the decision](../decisions/2026-11-06-emergency-full-speed.md).
 
 | Mode | Meaning |
 | --- | --- |
@@ -97,10 +101,12 @@ Each preset is a deliberate trade-off between noise and temperature. Points show
 3. It records every category that has reported. Reason: the planner must tell "this Mac has no GPU sensor" from "the GPU sensor stopped reporting".
 4. When the mode differs from the mode of the previous call, it resets the governor. See "Pacing".
 5. Automatic returns `.system(.userChoice)`. It also resets the governor.
-6. When either latch is set and the mode is not Max, it resets the governor and returns `.system(.emergency)`.
+6. When either latch is set, the mode is not Max and `keepsSettingInEmergency` is off, it resets the governor and returns `.emergency`.
 7. Max returns `.manual(speed: 1, temperature: nil)`. Max needs no data.
 8. Fixed returns `.system(.noData)` without safety readings. Otherwise it returns the fixed speed, raised to the floor.
 9. Curve returns `.system(.noData)` without safety readings or without a source temperature, and resets the governor. Otherwise it returns the speed of the curve, raised to the floor.
+
+With `keepsSettingInEmergency` on, step 6 does not return. Steps 7 to 9 run as usual, with the floor, the pacing and the `noData` guards.
 
 Reasons for the order of these steps are in [sensors.md](sensors.md): Max is the exception to an emergency, and missing data is never good news.
 
@@ -123,7 +129,7 @@ The floor of a reading depends on its distance from the critical limit of its ca
 Between these points, the floor rises linearly. A `.cpu` reading of 94 °C gives 0.74.
 
 - Only identified `.cpu` and `.gpu` readings feed the floor. Reason: die keys under moderate load and battery heat made the fans loud, and excess fan noise was the complaint of the user.
-- Each reading uses the critical limit of its own category. Reason: the floor keeps the fans up before the return to macOS at the critical limit.
+- Each reading uses the critical limit of its own category. Reason: the floor keeps the fans up before an emergency at the critical limit.
 - `.cpuDie`, battery, storage, memory, power and enclosure readings give a floor of 0. They keep only the emergency path where `triggersEmergency` applies. Reason: the same noise reason.
 - Unidentified readings give a floor of 0. Reason: not stated in the code.
 
@@ -132,9 +138,9 @@ Between these points, the floor rises linearly. A `.cpu` reading of 94 °C gives
 Thermal pressure comes from `ProcessInfo.ThermalState`. The snapshot carries it. A snapshot built without it is nominal. Reason: callers that build a snapshot need no change.
 
 - Serious or critical pressure gives a floor of at least 0.6. Reason: macOS sees throttling that the sensors miss.
-- Critical pressure starts the pressure emergency. The fans go to macOS, except in Max mode. Reason: macOS sees throttling that the sensors miss.
+- Critical pressure starts the pressure emergency. Fixed and Curve run every fan at full speed unless the user keeps their setting. Max is unchanged. Reason: macOS sees throttling that the sensors miss.
 - The pressure latch starts at critical, stays set at serious, and clears at fair or nominal. Reason: not stated in the code.
-- The pressure latch updates on every tick, also with no readings. Critical pressure with an empty snapshot returns `.system(.emergency)`, not `.noData`. Reason: the thermal state comes from macOS, not from sensors.
+- The pressure latch updates on every tick, also with no readings. Critical pressure with an empty snapshot returns `.emergency`, not `.noData`. With `keepsSettingInEmergency` on, it returns `.system(.noData)`. Reason: the thermal state comes from macOS, not from sensors.
 - The pressure latch and the temperature latch are independent. Neither clears the other. Reason: not stated in the code.
 
 An example of independence: pressure falls to fair while a reading is still at or above critical − 5. The emergency stays.
@@ -169,7 +175,7 @@ The rules have these effects:
 Reason for rule 2: an urgent rise must not delay protection. Reason for rules 3 to 6: they stop oscillation.
 Reason for the numbers 0.15, 0.04, 0.02 and 10 s: not stated in the code.
 
-The governor resets on Automatic, on an emergency, on Curve mode without data, and on a change of mode. After a change of mode, the first call returns its target. A change from Curve to Fixed with no floor gives the fixed speed on the next call. Reason: not stated in the code.
+The governor resets on Automatic, on Curve mode without data, and on a change of mode. It also resets on an emergency, but only when the override fires (`keepsSettingInEmergency` off). After a change of mode, the first call returns its target. A change from Curve to Fixed with no floor gives the fixed speed on the next call. Reason: not stated in the code.
 
 ### Speed in each mode
 
@@ -195,17 +201,21 @@ The curve editor shows an orange warning under the live summary only when the ac
 | Decision | State of the engine |
 | --- | --- |
 | `.system(.userChoice)` | `.system` |
-| `.system(.emergency)` | `.emergency` |
 | `.system(.noData)` | `.noData` |
 | `.manual`, helper ready | `.controlling(speed:)` |
 | `.manual`, helper not ready | `.needsHelper` |
+| `.emergency`, helper ready | `.emergency` |
+| `.emergency`, helper not ready | `.needsHelper` |
 | A failed write or a failed return | `.failed(message)` |
 
 - For each `.system` decision, the engine first returns the fans to macOS. When the return fails, the state is `.failed` and the next tick tries again. Reason: a failed return stays visible.
-- A `.manual` decision needs the helper. Without it, the state is `.needsHelper`. Reason: the chosen mode needs the helper.
-- A `.manual` decision needs fans with known limits. Without them, the state is `.failed` and the fans return to macOS. Reason: not stated in the code.
+- A `.manual` or `.emergency` decision needs the helper. Without it, the state is `.needsHelper`. Reason: the chosen mode needs the helper.
+- An `.emergency` decision writes every fan at speed 1 (maximum RPM), through the same writer as `.manual`. The helper, limits, restore obligation, generation and failed-write rules are the same. Reason: one write path keeps the safety rules in one place.
+- On successful writes, an `.emergency` decision never returns the fans to macOS: not on entry, not during the emergency, not on recovery to Fixed or Curve. Reason: the owner wants MacFan, not macOS, to cool hard.
+- A `.manual` or `.emergency` decision needs fans with known limits. Without them, the state is `.failed` and the fans return to macOS. Reason: not stated in the code.
 - The engine writes the target of each fan on every tick, also when it did not change. Reason: the write is the heartbeat of the helper.
 - A failed write sets `.failed` and returns the fans to macOS. Reason: a write can fail halfway and leave some fans manual.
+- `isCriticallyHot` is true while either latch is set, whatever the decision. Reason: the interface warns the user who keeps their setting in an emergency.
 
 The restore obligation keeps the promise that the fans return to macOS:
 
@@ -230,7 +240,23 @@ The fans also return to macOS before sleep and on quit. Reason: macOS is where M
 2. Max never goes to macOS because of an emergency. Reason: Max is already the strongest cooling.
 3. Missing data never clears an emergency. Reason: missing data is never good news.
 4. No failure path loses the obligation to restore system control. Reason: see "Applying a decision".
+5. In Fixed and Curve with the flag off, every tick with either latch set writes full speed. MacFan never gives the fans to macOS because of an emergency. Reason: the owner wants MacFan, not macOS, to cool hard.
+6. MacFan still gives the fans to macOS on Automatic, on missing data, on a failed write, on sleep and on quit. Reason: macOS is where MacFan always returns to.
+7. With the flag on, the Fixed or Curve speed is never below the floor of the tick. The floor comes from CPU and GPU readings and from pressure only. Die, battery, storage and memory emergencies add no speed. Reason: the floor is the only protection that stays with the flag on.
+
+## Interface
+
+| Element | Behavior |
+| --- | --- |
+| Mode tag | `.emergency` shows "Full speed (safety)". |
+| Fans banner | `.emergency` shows an orange banner, "Fans at full speed". It names both triggers. |
+| Keep-setting banner | A red banner, "Critically hot — keeping your setting", shows only in Fixed and Curve with the flag on, while the state is `.controlling` and `isCriticallyHot` is true. |
+| Fans footnote | The text covers Smart Curve and Fixed Speed only. It changes with the flag. |
+| Setting | Settings › General has the toggle "Keep my fan setting during emergencies". Its footer starts with "Risky." and names both triggers. |
+
+Reason for the flag in the banner rule: with the flag off, `isCriticallyHot` turns true before the full-speed writes finish. The banner must not claim that the user opted out.
 
 ## Related decisions
 
 - [Fan safety floor and pacing](../decisions/2026-11-06-fan-safety-floor-and-pacing.md)
+- [Emergency full speed](../decisions/2026-11-06-emergency-full-speed.md)
