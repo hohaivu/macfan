@@ -194,11 +194,11 @@ struct CoolingPlannerTests {
         #expect(planner.decide(settings: curve, snapshot: Fixtures.snapshot([Fixtures.reading(60)])) == .system(.noData))
     }
 
-    @Test func `critical temperature hands back to macOS`() {
+    @Test func `critical temperature runs the fans at full speed`() {
         var planner = CoolingPlanner()
         let hot = Fixtures.snapshot([Fixtures.reading(SensorCategory.cpu.thresholds.critical + 1)])
-        #expect(planner.decide(settings: settings(.fixed), snapshot: hot) == .system(.emergency))
-        #expect(planner.decide(settings: settings(.curve), snapshot: hot) == .system(.emergency))
+        #expect(planner.decide(settings: settings(.fixed), snapshot: hot) == .emergency)
+        #expect(planner.decide(settings: settings(.curve), snapshot: hot) == .emergency)
     }
 
     @Test func `max mode is never overridden`() {
@@ -213,10 +213,10 @@ struct CoolingPlannerTests {
         _ = planner.decide(settings: settings(.fixed), snapshot: Fixtures.snapshot([Fixtures.reading(critical)]))
 
         let slightlyCooler = Fixtures.snapshot([Fixtures.reading(critical - 1)])
-        #expect(planner.decide(settings: settings(.fixed), snapshot: slightlyCooler) == .system(.emergency))
+        #expect(planner.decide(settings: settings(.fixed), snapshot: slightlyCooler) == .emergency)
 
         let cool = Fixtures.snapshot([Fixtures.reading(critical - SafetyPolicy.recoveryMargin - 1)])
-        #expect(planner.decide(settings: settings(.fixed), snapshot: cool) != .system(.emergency))
+        #expect(planner.decide(settings: settings(.fixed), snapshot: cool) != .emergency)
     }
 
     @Test func `unidentified or irrelevant sensors never trigger an emergency`() {
@@ -243,7 +243,7 @@ struct FanTests {
     }
 }
 
-/// Die sensors run hotter than the cores. They must still hand back to macOS when truly hot,
+/// Die sensors run hotter than the cores. They must still trigger the emergency (full speed) when truly hot,
 /// but must not drive the default CPU number or the curve.
 @Suite("CPU die sensors")
 struct CPUDieTests {
@@ -271,10 +271,10 @@ struct CPUDieTests {
     }
 
     @Test(arguments: [CoolingMode.curve, .fixed])
-    func `a hot die hands back to macOS while cores are cool`(mode: CoolingMode) {
+    func `a hot die runs the fans at full speed while cores are cool`(mode: CoolingMode) {
         var planner = CoolingPlanner()
         let snapshot = Fixtures.snapshot([Fixtures.reading(60, id: "core"), Fixtures.reading(critical, category: .cpuDie, id: "die")])
-        #expect(planner.decide(settings: settings(mode), snapshot: snapshot) == .system(.emergency))
+        #expect(planner.decide(settings: settings(mode), snapshot: snapshot) == .emergency)
     }
 
     @Test func `a hot die doesn't override max`() {
@@ -286,7 +286,7 @@ struct CPUDieTests {
     @Test func `a die just below the limit is not an emergency`() {
         var planner = CoolingPlanner()
         let snapshot = Fixtures.snapshot([Fixtures.reading(60, id: "core"), Fixtures.reading(critical - 0.1, category: .cpuDie, id: "die")])
-        #expect(planner.decide(settings: settings(.fixed), snapshot: snapshot) != .system(.emergency))
+        #expect(planner.decide(settings: settings(.fixed), snapshot: snapshot) != .emergency)
     }
 
     @Test func `a die emergency recovers with the same margin as a core`() {
@@ -295,8 +295,8 @@ struct CPUDieTests {
             Fixtures.snapshot([Fixtures.reading(60, id: "core"), Fixtures.reading(celsius, category: .cpuDie, id: "die")])
         }
         _ = planner.decide(settings: settings(.fixed), snapshot: die(critical))
-        #expect(planner.decide(settings: settings(.fixed), snapshot: die(critical - SafetyPolicy.recoveryMargin + 1)) == .system(.emergency))
-        #expect(planner.decide(settings: settings(.fixed), snapshot: die(critical - SafetyPolicy.recoveryMargin - 0.1)) != .system(.emergency))
+        #expect(planner.decide(settings: settings(.fixed), snapshot: die(critical - SafetyPolicy.recoveryMargin + 1)) == .emergency)
+        #expect(planner.decide(settings: settings(.fixed), snapshot: die(critical - SafetyPolicy.recoveryMargin - 0.1)) != .emergency)
     }
 
     @Test func `a die reading gives the same emergency verdict as a core reading`() {
