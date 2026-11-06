@@ -116,7 +116,9 @@ Thresholds differ by part. Reason: an Apple Silicon CPU at 90 °C under load is 
 | `.power` | 75 | 95 | 110 | no | no |
 | `.wireless`, `.enclosure`, `.other` | 50 | 70 | 85 | no | no |
 
-`triggersEmergency` is true for each safety-relevant category and for `.cpuDie`. Only the emergency checks use it. Reason: die sensors run hotter than the cores but show overheating first. Every other consumer uses the safety-relevant flag. Safety-relevant categories are those whose overheating is a reason to step in.
+`triggersEmergency` is true for each safety-relevant category and for `.cpuDie`. Only the emergency checks use it. Reason: die sensors run hotter than the cores but show overheating first. Every other consumer uses the safety-relevant flag, except the safety floor. Safety-relevant categories are those whose overheating is a reason to step in.
+
+The safety floor reads only `.cpu` and `.gpu`. `.cpuDie`, battery, storage and memory keep only the emergency path. Reason: die keys under moderate load and battery heat made the fans loud. See [fan-control.md](fan-control.md).
 
 ## Temperature queries
 
@@ -149,6 +151,7 @@ Reason for `worstLevel`: only parts whose overheating is a reason to step in dec
 - A reading at or above the critical limit of its category starts an emergency. In an emergency, the limit drops by the recovery margin of 5 °C. Reason: the emergency lasts until temperatures fall this far below critical. The code does not state why the margin is 5 °C.
 - Automatic mode gives the fans to macOS. Reason: the user chose it, and macOS is where MacFan always returns to.
 - In an emergency, the fans go to macOS. Reason: when a part is critically hot, the controller of macOS is the safest place to be. Max mode is the exception and runs at full speed. Reason: Max is already the strongest cooling, so it never needs rescue.
+- Critical thermal pressure starts an emergency too, with the same Max exception. Reason: one emergency rule, two triggers. The floor, the pressure latch and the pacing of speeds are in [fan-control.md](fan-control.md).
 - Max mode needs no data. Reason: nothing stronger exists to fall back to.
 - Fixed mode needs safety readings. Without them, the fans go to macOS with reason `noData`. Reason: without safety readings, MacFan cannot see an emergency.
 - Curve mode needs safety readings and a source temperature. Without them, the fans go to macOS with reason `noData`. Reason: the same, and the curve has no temperature to follow.
