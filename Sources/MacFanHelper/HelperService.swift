@@ -10,7 +10,9 @@ import os
 /// 1. Every fan is handed back to macOS when the last client disconnects (app quit or crash).
 /// 2. A watchdog does the same if the app stops sending successful commands for
 ///    `watchdogTimeout`, and keeps retrying if a hand-back fails.
-/// 3. On SIGTERM (unregister, shutdown) fans are restored before exiting.
+/// 3. On SIGTERM, SIGINT or SIGHUP fans are restored before exiting; the exit status is
+///    non-zero if that failed, so launchd relaunches the helper.
+/// 4. On start, fans are handed back to macOS, retried every 5 s until confirmed.
 ///
 /// `@unchecked Sendable` is backed by a real rule: every mutable property is read and
 /// written only on the serial `queue`. XPC delivers calls on arbitrary threads, so the
@@ -31,6 +33,8 @@ final class HelperService: NSObject, NSXPCListenerDelegate, MacFanHelperProtocol
     }
 
     func start() {
+        // A failure is logged and the watchdog retries it; exiting would only loop on a transient SMC error.
+        queue.sync { _ = restoreLocked(reason: "helper started") }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + 5, repeating: 5)
         timer.setEventHandler { [weak self] in self?.checkWatchdog() }
@@ -39,8 +43,8 @@ final class HelperService: NSObject, NSXPCListenerDelegate, MacFanHelperProtocol
         log.info("Helper started; client requirement: \(self.clientRequirement, privacy: .public)")
     }
 
-    func restoreSynchronously() {
-        queue.sync { _ = restoreLocked(reason: "terminating") }
+    func restoreSynchronously() -> Bool {
+        queue.sync { restoreLocked(reason: "terminating") == nil }
     }
 
     // MARK: NSXPCListenerDelegate
@@ -105,6 +109,7 @@ final class HelperService: NSObject, NSXPCListenerDelegate, MacFanHelperProtocol
             log.info("Fans returned to macOS (\(reason, privacy: .public))")
             return nil
         } catch let error as NSError where error.domain == HelperConstants.errorDomain {
+            log.error("Returning fans to macOS failed (\(reason, privacy: .public)): \(error.localizedDescription, privacy: .public)")
             return error
         } catch {
             log.error("Returning fans to macOS failed (\(reason, privacy: .public)): \(String(describing: error), privacy: .public)")
@@ -122,12 +127,14 @@ final class HelperService: NSObject, NSXPCListenerDelegate, MacFanHelperProtocol
     }
 
     private func checkWatchdog() {
-        switch session?.checkWatchdog(at: Date()) {
+        // No session means the SMC could not be opened yet: retry opening it and restoring.
+        guard let session else { _ = restoreLocked(reason: "helper started, retry"); return }
+        switch session.checkWatchdog(at: Date()) {
         case .returnedFans:
             log.info("Watchdog returned the fans to macOS: no commands for \(Int(HelperConstants.watchdogTimeout))s")
         case .restoreFailed:
             log.error("Watchdog could not return the fans to macOS; retrying")
-        case .idle, nil:
+        case .idle:
             break
         }
     }

@@ -10,6 +10,7 @@ import Foundation
 /// - Only successful writes count as a heartbeat; a client stuck retrying failed writes
 ///   must not keep the watchdog away.
 /// - The watchdog keeps retrying a hand-back that failed.
+/// - A failed hand-back counts as control, even if this session never wrote, so the watchdog retries it.
 ///
 /// Not thread-safe: the helper confines it to one serial queue.
 public final class FanControlSession<SMC: SMCKeyAccess> {
@@ -42,7 +43,7 @@ public final class FanControlSession<SMC: SMCKeyAccess> {
 
     /// Hands every fan back to macOS. Throws, and stays in control, if any fan may still be manual.
     public func restore() throws {
-        try fans.restoreAutomatic()
+        do { try fans.restoreAutomatic() } catch { isControlling = true; throw error }
         isControlling = false
         lastHeartbeat = .distantPast
     }

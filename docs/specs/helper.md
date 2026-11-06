@@ -37,10 +37,10 @@ The helper is a root process that takes manual control of the fans for MacFan an
 ### Process start
 
 1. `HelperMain.main` builds the service with the code-signing requirement.
-2. `HelperService.start` restores the fans.
-3. `HelperService.start` starts the 5 s watchdog timer.
-4. `HelperMain.main` resumes the XPC listener.
-5. `HelperMain.main` installs the signal handlers for SIGTERM, SIGINT and SIGHUP.
+2. `HelperMain.main` installs the signal handlers for SIGTERM, SIGINT and SIGHUP.
+3. `HelperService.start` restores the fans.
+4. `HelperService.start` starts the 5 s watchdog timer.
+5. `HelperMain.main` resumes the XPC listener.
 
 ### Session states
 
@@ -110,6 +110,7 @@ The helper is a root process that takes manual control of the fans for MacFan an
 
 - SIGTERM makes the helper restore the fans, then exit. Reason: unregister and shutdown send SIGTERM.
 - SIGINT and SIGHUP make the helper restore the fans, then exit, as SIGTERM does. Reason: not stated in the code.
+- The helper installs the signal handlers before the start-up restore. Reason: a signal during the start-up restore must not be lost.
 - The helper exits with status 0 when the restore succeeded and with status 1 when it failed. Reason: a non-zero exit lets launchd relaunch the helper into the start-up retry.
 - The helper must never exit with status 0 after a failed restore. Reason: launchd does not relaunch the helper after exit 0.
 - The helper cannot handle SIGKILL. Reason: a process cannot catch SIGKILL. The launchd relaunch and the start-up restore cover it.
