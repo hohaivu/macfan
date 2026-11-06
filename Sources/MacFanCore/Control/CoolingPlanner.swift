@@ -18,7 +18,7 @@ public enum CoolingDecision: Hashable, Sendable {
 
 /// Decides, once per tick, what the fans should do. Pure logic: no I/O, fully testable.
 ///
-/// Missing data is never read as good news: without readings from safety-relevant sensors
+/// Missing data is never read as good news: without readings from sensors that can trigger an emergency
 /// an emergency stays an emergency, and Fixed Speed and Smart Curve hand the fans back.
 public struct CoolingPlanner: Sendable {
     public private(set) var isInEmergency = false
@@ -30,7 +30,7 @@ public struct CoolingPlanner: Sendable {
     public init() {}
 
     public mutating func decide(settings: CoolingSettings, snapshot: HardwareSnapshot) -> CoolingDecision {
-        let safetyReadings = snapshot.readings.filter { $0.sensor.isIdentified && $0.sensor.category.isSafetyRelevant }
+        let safetyReadings = snapshot.readings.filter { $0.sensor.isIdentified && $0.sensor.category.triggersEmergency }
         let hasSafetyData = !safetyReadings.isEmpty
         if hasSafetyData {
             // Only valid readings can prove an emergency is over.
@@ -123,7 +123,7 @@ public enum SafetyPolicy {
     public static func isEmergency(_ readings: [SensorReading], wasInEmergency: Bool) -> Bool {
         readings.contains { reading in
             let category = reading.sensor.category
-            guard reading.sensor.isIdentified, category.isSafetyRelevant else { return false }
+            guard reading.sensor.isIdentified, category.triggersEmergency else { return false }
             let limit = category.thresholds.critical - (wasInEmergency ? recoveryMargin : 0)
             return reading.celsius >= limit
         }

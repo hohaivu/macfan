@@ -231,6 +231,26 @@ struct CoolingHealthTests {
 
 @Suite("Insights storage")
 struct InsightsStorageTests {
+    @Test func `a 0.3.x cooling log is discarded`() throws {
+        let json = #"{"loadKind":"watts","entries":[{"day":0,"band":2,"controller":"macOS","minutes":12,"riseTotal":360,"rpmTotal":24000,"rpmMinutes":12}]}"#
+        let log = try JSONDecoder().decode(CoolingLog.self, from: Data(json.utf8))
+        #expect(log.entries.isEmpty)
+        #expect(log.loadKind == nil)
+    }
+
+    @Test func `a 0.3.x insights file keeps its moments and loses only the cooling log`() throws {
+        let moment = HotMoment(start: start, end: start.addingTimeInterval(90), peakCelsius: 95, peakSensor: "CPU 3", peakCategory: .cpu,
+                               throttledSeconds: 30, culprits: [])
+        let momentJSON = String(decoding: try JSONEncoder().encode(moment), as: UTF8.self)
+        let cooling = #"{"loadKind":"watts","entries":[{"day":0,"band":2,"controller":"macOS","minutes":12,"riseTotal":360,"rpmTotal":24000,"rpmMinutes":12}]}"#
+        let json = "{\"moments\":[\(momentJSON)],\"cooling\":\(cooling)}"
+
+        let data = try JSONDecoder().decode(InsightsData.self, from: Data(json.utf8))
+        #expect(data.moments == [moment])
+        #expect(data.cooling.entries.isEmpty)
+        #expect(data.cooling.loadKind == nil)
+    }
+
     @Test func `moments older than a month are dropped`() {
         var insights = InsightsData()
         let old = HotMoment(start: start, end: start, peakCelsius: 95, peakSensor: "CPU", peakCategory: .cpu, throttledSeconds: 0, culprits: [])

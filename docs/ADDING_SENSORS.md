@@ -26,6 +26,12 @@ which values rise.
 
 ## 2. Add a rule
 
+Apple Silicon CPU cores are not wildcard rules. Add them to the per-family core-key
+table in `SensorCatalog.swift` (see [the sensors spec](specs/sensors.md)). A core key
+becomes `.cpu`. Any other `Tp??`, `Te??` or `Tf??` key on that family becomes `.cpuDie`,
+which stays out of the default CPU temperature but still counts for safety. The rules
+below cover everything else.
+
 ```swift
 Rule("TC1?", .cpu, "CPU Cluster #"),
 ```

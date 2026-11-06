@@ -70,6 +70,7 @@ extension SensorCategory {
     var title: LocalizedStringKey {
         switch self {
         case .cpu: "CPU"
+        case .cpuDie: "CPU Die"
         case .gpu: "GPU"
         case .memory: "Memory"
         case .storage: "Storage"
@@ -84,6 +85,7 @@ extension SensorCategory {
     var symbol: String {
         switch self {
         case .cpu: "cpu"
+        case .cpuDie: "cpu"
         case .gpu: "square.stack.3d.up"
         case .memory: "memorychip"
         case .storage: "internaldrive"

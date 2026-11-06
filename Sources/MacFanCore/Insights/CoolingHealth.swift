@@ -241,10 +241,32 @@ public struct CoolingLog: Codable, Hashable, Sendable {
     /// The comparison needs this many days with data before it means anything.
     public static let learningDays = 14
 
+    /// Version 2: `rise` is measured on CPU cores. A missing version counts as 1 (0.3.x).
+    private static let currentMeasureVersion = 2
+
     public private(set) var loadKind: LoadKind?
     public private(set) var entries: [Entry] = []
 
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case loadKind, entries, measureVersion
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Rises measured on another basis can't be compared, so start learning over.
+        guard try container.decodeIfPresent(Int.self, forKey: .measureVersion) ?? 1 == Self.currentMeasureVersion else { return }
+        loadKind = try container.decodeIfPresent(LoadKind.self, forKey: .loadKind)
+        entries = try container.decode([Entry].self, forKey: .entries)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(Self.currentMeasureVersion, forKey: .measureVersion)
+        try container.encodeIfPresent(loadKind, forKey: .loadKind)
+        try container.encode(entries, forKey: .entries)
+    }
 
     public static func bandWidth(for kind: LoadKind) -> Double {
         switch kind {

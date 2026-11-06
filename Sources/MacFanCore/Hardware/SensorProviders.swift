@@ -14,6 +14,7 @@ protocol SensorProvider {
 
 final class SMCSensorProvider: SensorProvider {
     private let smc: SMCConnection
+    private let chipFamily = ChipReader.brand().flatMap(SensorCatalog.chipFamily)
 
     init(smc: SMCConnection) {
         self.smc = smc
@@ -22,7 +23,7 @@ final class SMCSensorProvider: SensorProvider {
     func discover() -> [Sensor] {
         let keys = (try? smc.allKeys()) ?? SensorCatalog.wellKnownSMCKeys.compactMap(SMCKey.init)
 
-        let found: [(key: String, classification: SensorCatalog.Classification)] = keys
+        let rawKeys = keys
             .filter { $0.name.hasPrefix("T") }
             .filter { key in
                 guard let info = try? smc.info(for: key), SensorCatalog.isTemperatureType(info.dataType),
@@ -30,7 +31,9 @@ final class SMCSensorProvider: SensorProvider {
                 else { return false }
                 return SensorCatalog.isPlausible(celsius: value)
             }
-            .map { ($0.name, SensorCatalog.classify(smcKey: $0.name)) }
+            .map(\.name)
+        let found = zip(rawKeys, SensorCatalog.classify(smcKeys: rawKeys, chipFamily: chipFamily))
+            .map { (key: $0, classification: $1) }
             .sorted { $0.key < $1.key }
 
         let names = SensorNaming.resolve(found.map(\.classification.nameTemplate))

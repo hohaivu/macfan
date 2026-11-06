@@ -76,10 +76,13 @@ case "apps":
 case "keys":
     do {
         let smc = try SMCConnection()
-        for key in try smc.allKeys() where key.name.hasPrefix("T") {
+        let keys = try smc.allKeys().filter { $0.name.hasPrefix("T") }
+        let classifications = SensorCatalog.classify(
+            smcKeys: keys.map(\.name), chipFamily: ChipReader.brand().flatMap(SensorCatalog.chipFamily)
+        )
+        for (key, classification) in zip(keys, classifications) {
             guard let info = try? smc.info(for: key), SensorCatalog.isTemperatureType(info.dataType) else { continue }
             let value = smc.double(key).map { String(format: "%7.2f", $0) } ?? "      ?"
-            let classification = SensorCatalog.classify(smcKey: key.name)
             let label = classification.isIdentified ? classification.nameTemplate : "—"
             print("\(key.name)  \(info.dataType)  \(value)  \(label)")
         }

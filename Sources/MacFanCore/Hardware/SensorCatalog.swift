@@ -38,8 +38,8 @@ public enum SensorCatalog {
         Rule("TCSA", .cpu, "CPU System Agent"),
         Rule("TCGC", .gpu, "Integrated GPU"),
         Rule("TC?C", .cpu, "CPU Core #"),
-        // CPU — Apple Silicon. Key families differ between chip generations, so these
-        // are numbered rather than labelled as performance/efficiency cores.
+        // CPU — Apple Silicon. Key layouts differ between chip generations, so cores come
+        // from `coreKeys`. These wildcards only apply to unknown chips (see `classify(smcKeys:chipFamily:)`).
         Rule("Te??", .cpu, "CPU Efficiency #"),
         Rule("Tp??", .cpu, "CPU #"),
         Rule("Tf??", .cpu, "CPU #"),
@@ -90,11 +90,61 @@ public enum SensorCatalog {
         .map(\.pattern)
         .filter { !$0.contains("?") }
 
-    public static func classify(smcKey key: String) -> Classification {
+    /// Core keys per chip family, copied from Stats (exelban/stats, Modules/Sensors/values.swift
+    /// @ a0b1c12e8b2162721450962623cb80bf5ee09001). `Tp09` is an efficiency core on M1 and a
+    /// performance core on M2/M4, so each family needs its own table.
+    private static let coreKeys: [String: [String: String]] = {
+        let performance = "CPU Performance Core #", efficiency = "CPU Efficiency Core #", `super` = "CPU Super Core #"
+        func table(_ groups: [(String, String)]) -> [String: String] {
+            Dictionary(groups.flatMap { name, keys in keys.split(separator: " ").map { (String($0), name) } },
+                       uniquingKeysWith: { first, _ in first })
+        }
+        return [
+            "M1": table([(performance, "Tp01 Tp05 Tp0D Tp0H Tp0L Tp0P Tp0X Tp0b"), (efficiency, "Tp09 Tp0T")]),
+            "M2": table([(performance, "Tp01 Tp05 Tp09 Tp0D Tp0X Tp0b Tp0f Tp0j"), (efficiency, "Tp1h Tp1t Tp1p Tp1l")]),
+            "M3": table([(performance, "Tf04 Tf09 Tf0A Tf0B Tf0D Tf0E Tf44 Tf49 Tf4A Tf4B Tf4D Tf4E"),
+                         (efficiency, "Te05 Te0L Te0P Te0S")]),
+            "M4": table([(performance, "Tp01 Tp05 Tp09 Tp0D Tp0V Tp0Y Tp0b Tp0e"), (efficiency, "Te05 Te0S Te09 Te0H")]),
+            "M5": table([(`super`, "Tp00 Tp04 Tp08 Tp0C Tp0G Tp0K"),
+                         (performance, "Tp0O Tp0R Tp0U Tp0X Tp0a Tp0d Tp0g Tp0j Tp0m Tp0p Tp0u Tp0y")]),
+            "M6": table([(`super`, "Tp0j Tp0g Tp09 Tp07"), (performance, "Tp0m Tp0L Tp0I Tp0d Tp0E Tp0G Tp0b Tp05"),
+                         (efficiency, "Te07 Te08 Te09 Te0c Te0h Te0i")]),
+            "A18": table([(performance, "Tp05 Tp0D"), (efficiency, "Te05 Te0S")]),
+        ]
+    }()
+
+    /// "Apple M4 Pro" → "M4", "Apple A18 Pro" → "A18"; Intel and anything else → `nil`.
+    public static func chipFamily(brand: String) -> String? {
+        guard brand.hasPrefix("Apple ") else { return nil }
+        let family = brand.dropFirst("Apple ".count).prefix { $0.isLetter || $0.isNumber }
+        guard let letter = family.first, "MA".contains(letter), family.dropFirst().allSatisfy(\.isNumber), family.count > 1
+        else { return nil }
+        return String(family)
+    }
+
+    /// With a family that has a core table, cores are `.cpu` and every other `Tp??`/`Te??`/`Tf??`
+    /// key is `.cpuDie`; everything else follows `smcRules`. Prefer `classify(smcKeys:chipFamily:)`,
+    /// which also falls back when the table doesn't fit this Mac.
+    public static func classify(smcKey key: String, chipFamily: String? = nil) -> Classification {
+        if let cores = chipFamily.flatMap({ coreKeys[$0] }) {
+            if let name = cores[key] {
+                return Classification(category: .cpu, nameTemplate: name, isIdentified: true)
+            }
+            if ["Tp", "Te", "Tf"].contains(where: key.hasPrefix), key.count == 4 {
+                return Classification(category: .cpuDie, nameTemplate: "CPU Die #", isIdentified: true)
+            }
+        }
         if let rule = smcRules.first(where: { matches(key, pattern: $0.pattern) }) {
             return Classification(category: rule.category, nameTemplate: rule.name, isIdentified: true)
         }
         return Classification(category: .other, nameTemplate: "Sensor \(key)", isIdentified: false)
+    }
+
+    /// One result per key, in order. When none of the family's core keys exist on this Mac the
+    /// table doesn't fit, so classify as for an unknown chip rather than leave `.cpu` empty.
+    public static func classify(smcKeys keys: [String], chipFamily: String?) -> [Classification] {
+        let family = chipFamily.flatMap { coreKeys[$0] }.flatMap { cores in keys.contains(where: cores.keys.contains) ? chipFamily : nil }
+        return keys.map { classify(smcKey: $0, chipFamily: family) }
     }
 
     /// Classifies a HID temperature service by its `Product` name.

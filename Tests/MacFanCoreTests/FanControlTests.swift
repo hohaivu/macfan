@@ -162,3 +162,99 @@ struct FanTests {
         #expect(FanStatus.name(forIndex: 1, count: 2) == "Fan 2")
     }
 }
+
+/// Die sensors run hotter than the cores. They must still hand back to macOS when truly hot,
+/// but must not drive the default CPU number or the curve.
+@Suite("CPU die sensors")
+struct CPUDieTests {
+    let critical = SensorCategory.cpu.thresholds.critical
+
+    func settings(_ mode: CoolingMode) -> CoolingSettings {
+        var settings = CoolingSettings()
+        settings.mode = mode
+        return settings
+    }
+
+    @Test func `category raw value, order and limits`() {
+        #expect(SensorCategory.cpuDie.rawValue == "cpuDie")
+        #expect(SensorCategory.cpuDie > .cpu && SensorCategory.cpuDie < .gpu)
+        #expect(SensorCategory.cpuDie.thresholds == SensorCategory.cpu.thresholds)
+        #expect(SensorCategory.cpuDie.thresholds.critical == 100)
+        #expect(!SensorCategory.cpuDie.isSafetyRelevant)
+    }
+
+    @Test func `which categories trigger an emergency`() {
+        let triggering: [SensorCategory] = [.cpu, .gpu, .memory, .storage, .battery, .cpuDie]
+        for category in SensorCategory.allCases {
+            #expect(category.triggersEmergency == triggering.contains(category), "\(category)")
+        }
+    }
+
+    @Test(arguments: [CoolingMode.curve, .fixed])
+    func `a hot die hands back to macOS while cores are cool`(mode: CoolingMode) {
+        var planner = CoolingPlanner()
+        let snapshot = Fixtures.snapshot([Fixtures.reading(60, id: "core"), Fixtures.reading(critical, category: .cpuDie, id: "die")])
+        #expect(planner.decide(settings: settings(mode), snapshot: snapshot) == .system(.emergency))
+    }
+
+    @Test func `a hot die doesn't override max`() {
+        var planner = CoolingPlanner()
+        let snapshot = Fixtures.snapshot([Fixtures.reading(60, id: "core"), Fixtures.reading(critical + 5, category: .cpuDie, id: "die")])
+        #expect(planner.decide(settings: settings(.max), snapshot: snapshot) == .manual(speed: 1, temperature: nil))
+    }
+
+    @Test func `a die just below the limit is not an emergency`() {
+        var planner = CoolingPlanner()
+        let snapshot = Fixtures.snapshot([Fixtures.reading(60, id: "core"), Fixtures.reading(critical - 0.1, category: .cpuDie, id: "die")])
+        #expect(planner.decide(settings: settings(.fixed), snapshot: snapshot) != .system(.emergency))
+    }
+
+    @Test func `a die emergency recovers with the same margin as a core`() {
+        var planner = CoolingPlanner()
+        func die(_ celsius: Double) -> HardwareSnapshot {
+            Fixtures.snapshot([Fixtures.reading(60, id: "core"), Fixtures.reading(celsius, category: .cpuDie, id: "die")])
+        }
+        _ = planner.decide(settings: settings(.fixed), snapshot: die(critical))
+        #expect(planner.decide(settings: settings(.fixed), snapshot: die(critical - SafetyPolicy.recoveryMargin + 1)) == .system(.emergency))
+        #expect(planner.decide(settings: settings(.fixed), snapshot: die(critical - SafetyPolicy.recoveryMargin - 0.1)) != .system(.emergency))
+    }
+
+    @Test func `a die reading gives the same emergency verdict as a core reading`() {
+        for celsius in [60.0, 94.9, 95, 99.9, 100, 120] {
+            for wasInEmergency in [false, true] {
+                #expect(SafetyPolicy.isEmergency([Fixtures.reading(celsius, category: .cpuDie)], wasInEmergency: wasInEmergency)
+                        == SafetyPolicy.isEmergency([Fixtures.reading(celsius, category: .cpu)], wasInEmergency: wasInEmergency),
+                        "\(celsius) \(wasInEmergency)")
+            }
+        }
+    }
+
+    @Test func `the curve follows cores, not die readings`() throws {
+        var planner = CoolingPlanner()
+        var curve = settings(.curve)
+        curve.preset = .balanced
+        curve.source = .hottestCPU
+        let snapshot = Fixtures.snapshot([Fixtures.reading(62, id: "core"), Fixtures.reading(83, category: .cpuDie, id: "die")])
+        let expected = try #require(CurvePreset.balanced.curve).speed(at: 62)
+        #expect(planner.decide(settings: curve, snapshot: snapshot) == .manual(speed: expected, temperature: 62))
+    }
+
+    @Test func `a curve won't follow die readings once the cores go quiet`() {
+        var planner = CoolingPlanner()
+        var curve = settings(.curve)
+        curve.source = .hottestCPU
+        _ = planner.decide(settings: curve, snapshot: Fixtures.snapshot([Fixtures.reading(62, id: "core"), Fixtures.reading(83, category: .cpuDie, id: "die")]))
+
+        let dieOnly = Fixtures.snapshot([Fixtures.reading(83, category: .cpuDie, id: "die")])
+        #expect(planner.decide(settings: curve, snapshot: dieOnly) == .system(.noData))
+    }
+
+    @Test func `die readings stay out of the default summaries and status`() {
+        let snapshot = Fixtures.snapshot([Fixtures.reading(62, id: "core"), Fixtures.reading(95, category: .cpuDie, id: "die")])
+        #expect(snapshot.worstLevel == .cool)
+        #expect(snapshot.hottest(in: [.cpu])?.celsius == 62)
+        #expect(!snapshot.summaries().filter(\.category.isSafetyRelevant).contains { $0.category == .cpuDie })
+        #expect(snapshot.summaries().first { $0.category == .cpuDie }?.hottest.celsius == 95, "still listed for the Sensors view")
+        #expect(snapshot.hottest()?.celsius == 95, "hottest overall still includes die readings")
+    }
+}
