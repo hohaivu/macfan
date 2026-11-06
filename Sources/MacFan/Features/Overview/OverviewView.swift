@@ -377,7 +377,7 @@ struct CoolingModeTag: View {
     static func text(for state: FanControlEngine.State, mode: CoolingMode) -> LocalizedStringResource {
         switch state {
         case .system: "Managed by macOS"
-        case .emergency: "macOS (safety)"
+        case .emergency: "Full speed (safety)"
         case .noData: "macOS (no data)"
         case .controlling: mode.title
         case .needsHelper: "Needs setup"

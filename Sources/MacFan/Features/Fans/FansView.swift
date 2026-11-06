@@ -162,8 +162,8 @@ private struct CoolingStatusBanner: View {
         guard model.preferences.cooling.mode != .automatic else { return nil }
         switch model.cooling.state {
         case .emergency:
-            return ("macOS is cooling your Mac",
-                    String(localized: "Something got critically hot, so macOS took over the fans. Your setting resumes once it has cooled down."),
+            return ("Fans at full speed",
+                    String(localized: "A part reached its critical temperature or macOS reported critical thermal pressure, so MacFan is running every fan at full speed. Your setting resumes once both have eased."),
                     "flame", .orange)
         case .noData:
             return ("Waiting for temperature readings",
@@ -173,6 +173,12 @@ private struct CoolingStatusBanner: View {
             return ("Fan control ran into a problem",
                     String(localized: "\(message). MacFan keeps retrying and hands the fans back to macOS whenever it can't apply your setting."),
                     "exclamationmark.triangle.fill", .red)
+        case .controlling where model.cooling.isCriticallyHot
+            && model.preferences.cooling.keepsSettingInEmergency
+            && model.preferences.cooling.mode != .max:
+            return ("Critically hot — keeping your setting",
+                    String(localized: "A part reached its critical temperature or macOS reported critical thermal pressure. You chose to keep your fan setting during emergencies, so MacFan isn't forcing full speed. You can change this in Settings › General."),
+                    "flame", .red)
         case .system, .controlling, .needsHelper:
             return nil
         }
@@ -533,9 +539,15 @@ private struct PowerProfilesCard: View {
 }
 
 private struct SafetyFootnote: View {
+    @Environment(AppModel.self) private var model
+
     var body: some View {
         Label {
-            Text("MacFan gives the fans back to macOS when you quit, when your Mac sleeps, and whenever a part gets critically hot.")
+            if model.preferences.cooling.keepsSettingInEmergency {
+                Text("MacFan gives the fans back to macOS when you quit or your Mac sleeps. You chose to keep your fan setting during emergencies in Settings › General.")
+            } else {
+                Text("MacFan gives the fans back to macOS when you quit or your Mac sleeps. When a part gets critically hot or macOS reports critical thermal pressure, Smart Curve and Fixed Speed run every fan at full speed until it eases.")
+            }
         } icon: {
             Image(systemName: "checkmark.shield")
         }

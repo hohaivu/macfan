@@ -14,9 +14,10 @@ public protocol FanCommanding {
 
 /// Applies `CoolingPlanner` decisions to the hardware.
 ///
-/// Fans are handed back to macOS when the user picks Automatic, during an emergency or
+/// Fans are handed back to macOS when the user picks Automatic, during
 /// missing data, before sleep, after a failed write, and on quit. The helper independently
-/// does the same if the app vanishes or goes silent.
+/// does the same if the app vanishes or goes silent. During an emergency in Fixed or Curve mode
+/// it runs every fan at full speed instead, unless the user opted to keep their setting.
 ///
 /// The rules that keep that promise:
 /// - `mayBeControlling` is set *before* the first write and cleared only after macOS
@@ -30,7 +31,7 @@ public final class FanControlEngine {
     public enum State: Equatable, Sendable {
         /// macOS is in charge.
         case system
-        /// A part got critically hot; macOS is in charge until it cools down.
+        /// A part is critically hot or macOS reports critical pressure; MacFan runs every fan at full speed until both have eased.
         case emergency
         /// There's no temperature data to act on; macOS is in charge.
         case noData
@@ -44,6 +45,8 @@ public final class FanControlEngine {
     public private(set) var state: State = .system
     /// The temperature the curve is reacting to right now.
     public private(set) var curveTemperature: Double?
+    /// Either emergency latch is set, whatever the decision. Lets the UI warn when the user chose to keep their setting.
+    public private(set) var isCriticallyHot = false
 
     @ObservationIgnored private var planner = CoolingPlanner()
     /// Starts `true` so a leftover manual state from a crash is cleared on the first tick.
@@ -61,41 +64,52 @@ public final class FanControlEngine {
         guard !isSuspended, !snapshot.fans.isEmpty else { return }
         let started = generation
 
-        switch planner.decide(settings: settings, snapshot: snapshot) {
+        let decision = planner.decide(settings: settings, snapshot: snapshot)
+        isCriticallyHot = planner.isInEmergency || planner.isUnderCriticalPressure
+
+        switch decision {
         case .system(let reason):
             curveTemperature = nil
             guard await returnToSystem(), generation == started else { return }
             state = switch reason {
             case .userChoice: .system
-            case .emergency: .emergency
             case .noData: .noData
             }
 
         case .manual(let speed, let temperature):
-            curveTemperature = temperature
-            guard commander.isReady else {
-                state = .needsHelper
-                return
-            }
-            guard snapshot.fans.allSatisfy(\.hasKnownLimits) else {
-                state = .failed("This Mac didn't report its fans' speed limits")
-                await returnToSystem()
-                return
-            }
-            mayBeControlling = true
-            do {
-                // Sent every tick even when unchanged: it doubles as the helper's heartbeat.
-                for fan in snapshot.fans {
-                    try await commander.setTarget(rpm: fan.rpm(forSpeed: speed), fanIndex: fan.index)
-                    guard generation == started else { return }
-                }
-                state = .controlling(speed: speed)
-            } catch {
+            await drive(speed: speed, temperature: temperature, fans: snapshot.fans, state: .controlling(speed: speed), started: started)
+
+        case .emergency:
+            await drive(speed: 1, temperature: nil, fans: snapshot.fans, state: .emergency, started: started)
+        }
+    }
+
+    /// Writes `speed` to every fan, then settles in `controlled`. Shared by `.manual` and `.emergency`
+    /// so both obey the same helper, limits, restore-obligation, generation and failed-write rules.
+    private func drive(speed: Double, temperature: Double?, fans: [FanStatus], state controlled: State, started: Int) async {
+        curveTemperature = temperature
+        guard commander.isReady else {
+            state = .needsHelper
+            return
+        }
+        guard fans.allSatisfy(\.hasKnownLimits) else {
+            state = .failed("This Mac didn't report its fans' speed limits")
+            await returnToSystem()
+            return
+        }
+        mayBeControlling = true
+        do {
+            // Sent every tick even when unchanged: it doubles as the helper's heartbeat.
+            for fan in fans {
+                try await commander.setTarget(rpm: fan.rpm(forSpeed: speed), fanIndex: fan.index)
                 guard generation == started else { return }
-                state = .failed(error.localizedDescription)
-                // A write may have failed halfway, leaving some fans manual.
-                await returnToSystem(keepingState: true)
             }
+            state = controlled
+        } catch {
+            guard generation == started else { return }
+            state = .failed(error.localizedDescription)
+            // A write may have failed halfway, leaving some fans manual.
+            await returnToSystem(keepingState: true)
         }
     }
 

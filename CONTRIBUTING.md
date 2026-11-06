@@ -49,7 +49,7 @@ Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing structure.
   controls labels and values; respect Reduced Motion.
 - **Changes to the helper or `MacFanHelperProtocol` need extra review.** They run as root.
   Bump `HelperConstants.protocolVersion` when the protocol changes.
-- **Never weaken a safety net** (restore on quit/sleep/disconnect/watchdog/emergency)
+- **Never weaken a safety net** (restore on quit/sleep/disconnect/watchdog, full speed in an emergency)
   without discussing it in an issue first.
 
 ## Commit style

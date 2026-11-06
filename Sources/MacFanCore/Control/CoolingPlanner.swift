@@ -4,8 +4,6 @@ public enum CoolingDecision: Hashable, Sendable {
     public enum Reason: Hashable, Sendable {
         /// The user picked Automatic.
         case userChoice
-        /// A part is critically hot; macOS's own controller is the safest place to be.
-        case emergency
         /// The curve's temperature source isn't reporting.
         case noData
     }
@@ -14,6 +12,8 @@ public enum CoolingDecision: Hashable, Sendable {
     case system(Reason)
     /// Run every fan at `speed` (0…1 of its range). `temperature` is what the curve read, if any.
     case manual(speed: Double, temperature: Double?)
+    /// A part is critically hot or macOS reports critical thermal pressure: run every fan at full speed until both have eased.
+    case emergency
 }
 
 /// Decides, once per tick, what the fans should do. Pure logic: no I/O, fully testable.
@@ -53,9 +53,9 @@ public struct CoolingPlanner: Sendable {
             return .system(.userChoice)
         }
         // Max is already the strongest cooling there is, so it never needs rescuing.
-        if isInEmergency || isUnderCriticalPressure, settings.mode != .max {
+        if isInEmergency || isUnderCriticalPressure, settings.mode != .max, !settings.keepsSettingInEmergency {
             governor.reset()
-            return .system(.emergency)
+            return .emergency
         }
 
         switch settings.mode {
@@ -141,7 +141,7 @@ public struct SpeedGovernor: Sendable {
     }
 }
 
-/// When to stop experimenting and let macOS take over.
+/// When a part is too hot for the user's setting alone.
 public enum SafetyPolicy {
     /// Once in an emergency, stay there until temperatures fall this far below critical.
     public static let recoveryMargin = 5.0
