@@ -246,13 +246,13 @@ The fans also return to macOS before sleep and on quit. Reason: macOS is where M
 
 ## Interface
 
-| Element | Behavior |
-| --- | --- |
-| Mode tag | `.emergency` shows "Full speed (safety)". |
-| Fans banner | `.emergency` shows an orange banner, "Fans at full speed". It names both triggers. |
-| Keep-setting banner | A red banner, "Critically hot — keeping your setting", shows only in Fixed and Curve with the flag on, while the state is `.controlling` and `isCriticallyHot` is true. |
-| Fans footnote | The text covers Smart Curve and Fixed Speed only. It changes with the flag. |
-| Setting | Settings › General has the toggle "Keep my fan setting during emergencies". Its footer starts with "Risky." and names both triggers. |
+| Element | Behavior | Reason |
+| --- | --- | --- |
+| Mode tag | `.emergency` shows "Full speed (safety)". The sidebar reuses this text. | The old text "macOS (safety)" named a handoff that no longer happens in Fixed and Curve. |
+| Fans banner | `.emergency` shows an orange banner, "Fans at full speed". It names both triggers and says that the setting resumes. | The text stays true for either trigger. The orange colour: Reason: not stated in the code. |
+| Keep-setting banner | A red banner, "Critically hot — keeping your setting", shows only in Fixed and Curve with the flag on, while the state is `.controlling` and `isCriticallyHot` is true. | The plan assumes that the banner keeps the risk of the opt-in visible. The red colour: Reason: not stated in the code. |
+| Fans footnote | The text covers Smart Curve and Fixed Speed only. It changes with the flag. | The footnote shows in every mode, so it must not promise full speed in Automatic or Max. The change with the flag: Reason: not stated in the code. |
+| Setting | Settings › General has the toggle "Keep my fan setting during emergencies". Its footer starts with "Risky." and names both triggers. | The decision labels the opt-in as risky, because it weakens a safety net. The word "Risky" means that the text does not rely on colour alone. The footer names both triggers so that the text stays true for either one. |
 
 Reason for the flag in the banner rule: with the flag off, `isCriticallyHot` turns true before the full-speed writes finish. The banner must not claim that the user opted out.
 
