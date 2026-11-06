@@ -12,7 +12,7 @@ enum Fixtures {
         FanStatus(index: index, name: "Fan", currentRPM: current, minimumRPM: minimum, maximumRPM: maximum, targetRPM: nil, isManual: false)
     }
 
-    static func snapshot(_ readings: [SensorReading], at date: Date = Date(timeIntervalSince1970: 0), fans: [FanStatus] = [fan()]) -> HardwareSnapshot {
-        HardwareSnapshot(date: date, readings: readings, fans: fans, battery: nil)
+    static func snapshot(_ readings: [SensorReading], at date: Date = Date(timeIntervalSince1970: 0), fans: [FanStatus] = [fan()], thermalState: ProcessInfo.ThermalState = .nominal) -> HardwareSnapshot {
+        HardwareSnapshot(date: date, readings: readings, fans: fans, battery: nil, thermalState: thermalState)
     }
 }

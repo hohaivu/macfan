@@ -28,8 +28,14 @@ struct MissingDataTests {
         _ = planner.decide(settings: settings(.fixed), snapshot: Fixtures.snapshot([Fixtures.reading(critical + 1)]))
         _ = planner.decide(settings: settings(.fixed), snapshot: Fixtures.snapshot([]))
 
+        // 94°C is just inside the recovery margin, so the emergency ends. The floor (contract 5) gives 0.74 there.
         let cooled = Fixtures.snapshot([Fixtures.reading(critical - SafetyPolicy.recoveryMargin - 1)])
-        #expect(planner.decide(settings: settings(.fixed), snapshot: cooled) == .manual(speed: 0, temperature: nil))
+        guard case let .manual(speed, temperature) = planner.decide(settings: settings(.fixed), snapshot: cooled) else {
+            Issue.record("expected the emergency to end")
+            return
+        }
+        #expect(abs(speed - 0.74) < 1e-9)
+        #expect(temperature == nil)
     }
 
     @Test(arguments: [CoolingMode.fixed, .curve])

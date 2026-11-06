@@ -315,6 +315,17 @@ private struct CurveSettings: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
 
+                if SafetyPolicy.isBelowMinimum(preferences.cooling.activeCurve) {
+                    let t90 = preferences.unit.format(90)
+                    let t95 = preferences.unit.format(95)
+                    Label(
+                        String(localized: "This curve is below the safety minimum. MacFan runs the fans at least 50% at \(t90) and 80% at \(t95)."),
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                }
+
                 if preferences.cooling.preset == .custom {
                     DisclosureGroup("Exact values") {
                         CurvePointsEditor(curve: $preferences.cooling.customCurve)

@@ -39,7 +39,8 @@ public enum SensorCategory: String, CaseIterable, Codable, Sendable, Comparable 
     }
 
     /// Die sensors run hotter than the cores but are where overheating shows first, so only
-    /// the emergency checks read them; every other consumer uses `isSafetyRelevant`.
+    /// the emergency checks read them; every other consumer uses `isSafetyRelevant`, except the
+    /// safety floor, which reads only `.cpu` and `.gpu`.
     public var triggersEmergency: Bool { isSafetyRelevant || self == .cpuDie }
 }
 

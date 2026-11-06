@@ -8,13 +8,23 @@ public struct HardwareSnapshot: Sendable {
     public var battery: BatteryInfo?
     /// Whole-system power draw in watts, where the SMC reports it (Apple Silicon).
     public var systemPower: Double?
+    /// macOS's own view of thermal pressure; it sees throttling the sensors miss.
+    public var thermalState: ProcessInfo.ThermalState
 
-    public init(date: Date, readings: [SensorReading], fans: [FanStatus], battery: BatteryInfo?, systemPower: Double? = nil) {
+    public init(
+        date: Date,
+        readings: [SensorReading],
+        fans: [FanStatus],
+        battery: BatteryInfo?,
+        systemPower: Double? = nil,
+        thermalState: ProcessInfo.ThermalState = .nominal
+    ) {
         self.date = date
         self.readings = readings
         self.fans = fans
         self.battery = battery
         self.systemPower = systemPower
+        self.thermalState = thermalState
     }
 
     public static let empty = HardwareSnapshot(date: .distantPast, readings: [], fans: [], battery: nil)
